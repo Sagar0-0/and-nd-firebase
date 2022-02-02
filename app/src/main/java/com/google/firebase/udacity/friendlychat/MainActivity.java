@@ -94,7 +94,7 @@ public class MainActivity extends AppCompatActivity {
         firebaseStorage=FirebaseStorage.getInstance();
 
         mMessagesDatabaseReference =mFirebaseDatabase.getReference().child("messages");
-        mChatPhotoStorageReference =firebaseStorage.getReference().child("chat_pphotos");
+        mChatPhotoStorageReference =firebaseStorage.getReference().child("chat_photos");
 
         // Initialize references to views
         mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
