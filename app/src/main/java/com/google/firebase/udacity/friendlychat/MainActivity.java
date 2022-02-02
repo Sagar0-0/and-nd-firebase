@@ -16,9 +16,9 @@
 package com.google.firebase.udacity.friendlychat;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 
-import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -37,7 +37,10 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.firebase.ui.auth.AuthUI;
-import com.firebase.ui.auth.FirebaseAuthUIActivityResultContract;
+import com.google.android.gms.tasks.Continuation;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.ChildEventListener;
@@ -45,6 +48,9 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -57,6 +63,7 @@ public class MainActivity extends AppCompatActivity {
     public static final String ANONYMOUS = "anonymous";
     public static final int DEFAULT_MSG_LENGTH_LIMIT = 1000;
     private static final int RC_SIGN_IN = 1;
+    private static final int RC_PHOTO_PICKER = 0;
 
     private ListView mMessageListView;
     private MessageAdapter mMessageAdapter;
@@ -68,10 +75,12 @@ public class MainActivity extends AppCompatActivity {
     private String mUsername;
 
     private FirebaseDatabase mFirebaseDatabase;
-    private DatabaseReference mMessageDatabaseReference;
+    private DatabaseReference mMessagesDatabaseReference;
     private ChildEventListener childEventListener;
     private FirebaseAuth firebaseAuth;
     private FirebaseAuth.AuthStateListener authStateListener;
+    private FirebaseStorage firebaseStorage;
+    private StorageReference mChatPhotoStorageReference;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,8 +91,11 @@ public class MainActivity extends AppCompatActivity {
 
         mFirebaseDatabase=FirebaseDatabase.getInstance();
         firebaseAuth=FirebaseAuth.getInstance();
+        firebaseStorage=FirebaseStorage.getInstance();
 
-        mMessageDatabaseReference=mFirebaseDatabase.getReference().child("messages");
+        mMessagesDatabaseReference =mFirebaseDatabase.getReference().child("messages");
+        mChatPhotoStorageReference =firebaseStorage.getReference().child("chat_pphotos");
+
         // Initialize references to views
         mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
         mMessageListView = (ListView) findViewById(R.id.messageListView);
@@ -103,7 +115,10 @@ public class MainActivity extends AppCompatActivity {
         mPhotoPickerButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // TODO: Fire an intent to show an image picker
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/jpeg");
+                intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+                startActivityForResult(Intent.createChooser(intent, "Complete action using"), RC_PHOTO_PICKER);
             }
         });
 
@@ -131,7 +146,7 @@ public class MainActivity extends AppCompatActivity {
         // Send button sends a message and clears the EditText
         mSendButton.setOnClickListener(view -> {
             FriendlyMessage friendlyMessage=new FriendlyMessage(mMessageEditText.getText().toString(),mUsername,null);
-            mMessageDatabaseReference.push().setValue(friendlyMessage);
+            mMessagesDatabaseReference.push().setValue(friendlyMessage);
             // Clear input box
             mMessageEditText.setText("");
         });
@@ -169,7 +184,7 @@ public class MainActivity extends AppCompatActivity {
                 public void onChildMoved(@NonNull DataSnapshot snapshot, @Nullable String previousChildName) {}
                 public void onCancelled(@NonNull DatabaseError error) {}
             };
-            mMessageDatabaseReference.addChildEventListener(childEventListener);
+            mMessagesDatabaseReference.addChildEventListener(childEventListener);
         }
 
     }
@@ -182,7 +197,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void detachDatabaseReadListener() {
         if(childEventListener!=null){
-            mMessageDatabaseReference.removeEventListener(childEventListener);
+            mMessagesDatabaseReference.removeEventListener(childEventListener);
             childEventListener=null;
         }
     }
@@ -210,6 +225,34 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this,"Sign in cancelled :(",Toast.LENGTH_SHORT).show();
                 finish();
             }
+        }else if (requestCode == RC_PHOTO_PICKER && resultCode == RESULT_OK) {
+            assert data != null;
+            Uri selectedImageUri = data.getData();
+
+            // Get a reference to store file at chat_photos/<FILENAME>
+            StorageReference photoRef = mChatPhotoStorageReference.child(selectedImageUri.getLastPathSegment());
+            UploadTask uploadTask=photoRef.putFile(selectedImageUri);
+            Task<Uri> urlTask = uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+                @Override
+                public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                    if (!task.isSuccessful()) {
+                        throw task.getException();
+                    }
+
+                    // Continue with the task to get the download URL
+                    return photoRef.getDownloadUrl();
+                }
+            }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                @Override
+                public void onComplete(@NonNull Task<Uri> task) {
+                    if (task.isSuccessful()) {
+                        Uri downloadUrl = task.getResult();
+                        // Set the download URL to the message box, so that the user can send it to the database
+                        FriendlyMessage friendlyMessage = new FriendlyMessage(null, mUsername, downloadUrl.toString());
+                        mMessagesDatabaseReference.push().setValue(friendlyMessage);
+                    }
+                }
+            });
         }
     }
 
